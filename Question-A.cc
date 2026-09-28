@@ -47,13 +47,52 @@ struct Row {
     double y_measured;   // deg
 };
 
+// Convert two hexadecimal characters from the CAN data into one byte.
+int readHexByte(const std::string& data, std::size_t position) {
+    return std::stoi(data.substr(position, 2), nullptr, 16);
+}
+
 // Read the candump log at `path` and return one Row per STEER_ActuatorLog frame, in order.
 // Push one Row{t, u_commanded, y_measured} per kept frame.
 std::vector<Row> decodeLog(const std::string& path) {
     std::vector<Row> rows;
 
-    // TODO: your code here
-    (void)path;  // remove once you open the file
+    std::ifstream file(path);
+    std::string line;
+    double firstTimestamp = 0.0;
+
+    while (std::getline(file, line)) {
+        // CAN ID 0x200 is STEER_ActuatorLog in SteeringBench.dbc.
+        const std::size_t framePosition = line.find(" 200#");
+        if (framePosition == std::string::npos)
+            continue;
+
+        const std::size_t dataPosition = framePosition + 5;
+        if (line.size() < dataPosition + 8)
+            continue;
+
+        const std::string data = line.substr(dataPosition);
+        const int byte0 = readHexByte(data, 0);
+        const int byte1 = readHexByte(data, 2);
+        const int byte2 = readHexByte(data, 4);
+        const int byte3 = readHexByte(data, 6);
+
+        // The DBC stores both signals as signed, little-endian 16-bit values.
+        int measured = byte0 | (byte1 << 8);
+        int commanded = byte2 | (byte3 << 8);
+
+        if (measured & 0x8000)
+            measured -= 0x10000;
+        if (commanded & 0x8000)
+            commanded -= 0x10000;
+
+        const std::size_t timestampEnd = line.find(')');
+        const double timestamp = std::stod(line.substr(1, timestampEnd - 1));
+
+        if (rows.empty())
+            firstTimestamp = timestamp;
+        rows.push_back({timestamp - firstTimestamp, commanded * 0.1, measured * 0.1});
+    }
 
     return rows;
 }

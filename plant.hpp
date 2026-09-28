@@ -10,16 +10,38 @@
 #include <cmath>
 
 struct Plant {
-    // add whatever state your model needs (velocity, motor-side angle, ...)
     double angle = 0.0;
+    double motorAngle = 0.0;
+    double velocity = 0.0;
 
     // u_cmd : commanded velocity, deg/s
     // dt    : timestep, seconds
     // return: measured output angle, deg
     double step(double u_cmd, double dt) {
-        angle += u_cmd * dt;                   // placeholder dynamics -- replace this
+        const double gain = 1.3;
+        const double timeConstant = 0.1;
+        const double backlash = 2.6;
+
+        // The actuator takes some time to reach the commanded velocity.
+        double targetVelocity = gain * u_cmd;
+        velocity += (targetVelocity - velocity) * dt / timeConstant;
+
+        // Work out the position of the motor before the backlash is applied.
+        motorAngle += velocity * dt;
+
+        // The output only moves after the motor has crossed the backlash gap.
+        if (motorAngle > angle + backlash) {
+            angle = motorAngle - backlash;
+        } else if (motorAngle < angle - backlash) {
+            angle = motorAngle + backlash;
+        }
+
         return std::round(angle / 0.1) * 0.1;  // the sensor reads to 0.1 deg
     }
 
-    void reset() { angle = 0.0; }
+    void reset() {
+        angle = 0.0;
+        motorAngle = 0.0;
+        velocity = 0.0;
+    }
 };

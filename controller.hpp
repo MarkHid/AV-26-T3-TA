@@ -12,13 +12,51 @@
 class Controller : public IController {
 public:
     double update(double target, double measured, double dt) override {
-        (void)dt;
+        const double kp = 1.5;
+        const double ki = 0.01;
+        const double kd = 0.02;
+        const double maxCommand = 15.0;
+        const double integralLimit = 8.0;
+
         double error = target - measured;
-        double kp = 1.0; // TODO: replace with your design
-        return kp * error;
+
+        // Clear stored error once the target is reached or crossed. This
+        // stops the integral term from continuing to push past the target.
+        if ((error > -0.05 && error < 0.05) ||
+            (!firstUpdate && error * previousError < 0.0)) {
+            integral = 0.0;
+        }
+
+        integral += error * dt;
+        if (integral > integralLimit)
+            integral = integralLimit;
+        else if (integral < -integralLimit)
+            integral = -integralLimit;
+
+        double derivative = 0.0;
+        if (!firstUpdate && dt > 0.0)
+            derivative = (error - previousError) / dt;
+
+        double command = kp * error + ki * integral + kd * derivative;
+
+        if (command > maxCommand)
+            command = maxCommand;
+        else if (command < -maxCommand)
+            command = -maxCommand;
+
+        previousError = error;
+        firstUpdate = false;
+        return command;
     }
 
     void reset() override {
-        // TODO: reset any internal state here, if you have any.
+        integral = 0.0;
+        previousError = 0.0;
+        firstUpdate = true;
     }
+
+private:
+    double integral = 0.0;
+    double previousError = 0.0;
+    bool firstUpdate = true;
 };

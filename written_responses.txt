@@ -1,20 +1,101 @@
 ### Part A - recover the data (CAN decode)
 
-Frame ID kept:
+Frame ID kept :0x200 (512 in decimal)
 
-Signal 1 (u_commanded):  byte position / endianness / signed? / scale / offset:
-Signal 2 (y_measured):   byte position / endianness / signed? / scale / offset:
-
+Signal 1 (u_commanded): bytes 2 and 3 / little-endian / signed 16-bit / scale 0.1 / offset 0
+Signal 2 (y_measured): bytes 0 and 1 / little-endian / signed 16-bit / scale 0.1 / offset 0
 Notes (anything odd in the logs, how you checked the decode against the PNGs):
 
+I started by looking through the DBC file and matching its frame IDs with the IDs
+that appeared in the log. There were quite a few unrelated frames, but 
+STEER_ActuatorLog had ID 512, which is 0x200 in the log, so I only kept those
+frames.
 
+The byte ordering confused me at first because the DBC lists a start bit rather 
+than directly saying which two bytes to use. After checking the little-endian layout, 
+I found that the measured angle uses the first two bytes and the commanded rate uses the 
+next two. I also had to handle them as signed values so that negative commands in the 
+reversal test decoded correctly.
+
+I multiplied the raw values by the DBC scale of 0.1 and made each timestamp relative 
+to the first 0x200 frame. I checked my results by running plot_data.py. The general
+shapes and values matched the supplied PNGs, especially the 15 deg/s step command 
+and the positive and negative commands in the reversal test.
 
 ### Part B - identify system
 
+The actuator was modelled as a first-order velocity response followed by an
+integrator. From the straight section of the step-test plot, the measured
+angular rate was about 1.3 times the commanded rate, so I used a gain of 1.3.
+
+The measured angle continued moving briefly after the command changed to zero.
+I estimated the time constant from this rounded stopping response and used
+approximately 0.1 seconds.
+
+The nonlinearity appears to be backlash rather than a deadzone. In the
+deadband-test plot, the first small positive command moves the output, but
+later positive and negative commands produce almost no measured movement.
+This shows that the result depends on the previous position and direction.
+A deadzone would instead consistently reject commands below a fixed size.
+
+I modelled the backlash by allowing the internal motor angle and measured
+output angle to differ by up to 2.6 degrees. This corresponds to a total
+direction-reversal gap of approximately 5.2 degrees.
+
+The model was checked against all three datasets. The maximum errors were
+0.6 degrees for the step test, 0.4 degrees for the reversal test, and
+0.2 degrees for the deadband test.
 
 
 ### Part C - control design choices
 
+I started with just proportional control because it was the easiest way to see
+how the model reacted. A gain of 1 was stable, but the small on-centre change
+was slow and still had a small error at the end of the test. I then added the
+integral and derivative terms and adjusted them using the three controller
+tests.
+
+The final gains I used were kp = 1.5, ki = 0.01 and kd = 0.02. The proportional
+term does most of the work. I kept the integral gain quite small because a
+larger value stored too much error during the large move and made the angle
+overshoot. The derivative term is also small because the measured angle only
+changes in 0.1 degree steps, which can make the calculated derivative noisy.
+
+I limited the command to +/-15 deg/s and limited the integral value to +/-8.
+This is a simple form of anti-windup. I also clear the integral when the target
+is reached or the error changes sign, so it does not keep pushing the actuator
+past the target.
+
+With these values, the supplied check reached the large move, reversal and
+small on-centre target with zero final error and zero reported overshoot. The
+settling times were about 2.33 s, 2.23 s and 2.74 s respectively.
 
 
 ### Part D - reflection
+I found this task difficult at the start because it combined a few topics that
+I had seen before, but had not used together in one project. The CAN data was
+probably the most unfamiliar part. I understood hexadecimal values from past
+programming courses, but I had to research how a DBC describes start bits,
+endianness, signed values and scaling before the log data made sense. I made
+progress by separating the problem into small steps and checking each result
+against the supplied plots instead of trying to solve everything at once.
+The plant model also took some trial and error. At first I was mainly looking
+at the size of the input and output, but the deadband plot did not make sense
+as a simple deadzone. Reading more about backlash and then comparing that idea
+with the repeated direction changes helped me understand why the output could
+stay still while the internal motor position changed. Ideas from previous
+control-systems work, such as gain, time constants and first-order response,
+then helped me turn what I saw in the plots into a model.
+
+My first controller attempts were not well tuned. Proportional control was
+stable but slow on the small correction, while using too much integral action
+caused overshoot because error kept building during the larger movement. I
+kept testing different values, reading about integral windup, and checking the
+results rather than only changing numbers randomly. This led me to add limits
+and clear the stored integral when the target was reached or crossed.
+Overall, the project reminded me that I will not always remember the complete
+solution immediately. I can still work through an unfamiliar problem by using
+what I remember from earlier courses, researching the parts I do not
+understand, and continuing to test and revise my approach. The main thing that
+helped was being persistent and using each failed attempt to decide what to
+investigate or change next.
